@@ -1,259 +1,65 @@
-# Alkeme Backend Template - Project Rules
+# Quick Reference - Alkeme Backend Template
 
 ## Project Type
-This is a **Copier template repository** for generating FastAPI backend applications.
-- All code must be production-ready and follow best practices
-- Files ending in `.jinja` are Jinja2 templates
-- Use `{{ variable }}` for substitution, `{% if %}` for conditionals
+Copier template for FastAPI + MongoDB/Cosmos DB backends deployed to Azure Container Apps.
 
-## General Project Rules
+## Critical Rules
 
-### File Organization
-- Use lowercase_with_underscores for all files and directories
-- Group related functionality in modules (routers/, services/, models/, clients/, utils/)
-- Keep files focused and single-purpose (< 300 lines when possible)
-- Place tests in `tests/` with matching structure to source code
+### Architecture (Enforce Strictly)
+```
+Routers → Services → Clients
+```
+- **Routers**: HTTP only, use Depends(), delegate to services
+- **Services**: Business logic, NO FastAPI imports, return typed objects
+- **Clients**: Data access (DB, APIs), no business logic
 
-### Code Quality
-- All code must pass: ruff check, ruff format, mypy, pytest
-- Maintain >80% test coverage
-- No TODO comments without GitHub issues
-- Document public APIs with docstrings
-- Use type hints on ALL function signatures
+### Naming (User Preference)
+- Files/functions: `lowercase_with_underscores` (user_service.py, get_user_by_id)
+- Classes: `PascalCase` (UserService, ProjectModel)
+- Booleans: `is_`, `has_`, `can_` prefix
 
-### Git & Version Control
-- Write conventional commit messages: feat:, fix:, docs:, refactor:, test:, chore:
-- Keep commits atomic and focused
-- Never commit secrets, credentials, or `.env` files
-- Use `.gitignore` for Python, IDEs, and environment files
+### Type Hints (Required)
+All functions must have type hints:
+```python
+async def get_user(user_id: str) -> UserPublic | None:
+    pass
+```
 
-### Dependencies
-- Use `uv` as the package manager (fast, modern)
-- Pin major versions in `pyproject.toml` (e.g., `fastapi>=0.117.1`)
-- Use PyMongo 3.x (NOT 4.x) for Azure Cosmos DB compatibility
-- Document all optional dependencies with clear comments
+### Async (Critical)
+- Use `async def` for ALL I/O (DB, HTTP, files)
+- Never use sync libraries (requests, pymongo sync) in async code
+- Use `await` for async calls
 
-### Security
-- **NEVER log secrets**: passwords, tokens, API keys, connection strings
-- Use environment variables for configuration
-- Validate ALL user inputs with Pydantic models
-- Apply rate limiting on public endpoints
-- Use HTTPS in production (Azure Container Apps enforces this)
+### MongoDB/Cosmos DB
+- **Must use PyMongo 3.x** (NOT 4.x) for Cosmos DB compatibility
+- Always validate ObjectId: `if not ObjectId.is_valid(id): ...`
+- Use Motor for async operations
 
-## Python-Specific Rules
-
-### Style & Formatting
-- Follow PEP 8 strictly
-- Line length: 100 characters (ruff configured)
-- Use double quotes for strings
-- Use trailing commas in multi-line structures
-- Order imports: stdlib → third-party → local (ruff will sort)
-
-### Type Hints
-- Use type hints on ALL function signatures (parameters and return types)
-- Use `from __future__ import annotations` for forward references
-- Prefer `list[str]` over `List[str]` (Python 3.10+)
-- Use `str | None` over `Optional[str]` (Python 3.10+)
-- Use `collections.abc` types for protocols (Sequence, Mapping, Iterable)
-
-### Naming Conventions
-- **Modules/files**: `lowercase_with_underscores` (user_service.py, mongo_db.py)
-- **Functions/variables**: `lowercase_with_underscores` (get_user_by_id, is_active)
-- **Classes**: `PascalCase` (UserService, ProjectModel)
-- **Constants**: `UPPER_CASE_WITH_UNDERSCORES` (MAX_RETRIES, DEFAULT_TIMEOUT)
-- **Private**: prefix with `_` (_validate_input, _client)
-- **Booleans**: prefix with `is_`, `has_`, `can_` (is_active, has_permission)
-
-### Functions & Methods
-- Keep functions small and focused (< 50 lines ideal)
-- Use early returns and guard clauses (avoid deep nesting)
-- Prefer explicit over implicit (no magic)
-- Return typed objects, not primitives (RORO pattern)
-- Use `async def` for I/O operations, `def` for CPU-bound
-
-### Error Handling
-- Use specific exceptions, not bare `except:`
-- Raise `HTTPException` for expected API errors
-- Log unexpected errors with full traceback
-- Use guard clauses to fail fast
-- Provide actionable error messages
-
-### Async Programming
-- Use `async def` for ALL I/O: database, HTTP, file operations
-- Use `await` for async calls (never block the event loop)
-- Use `asyncio.gather()` for parallel operations
-- Use async context managers for resource management
-- Never use synchronous libraries (requests, pymongo sync) in async code
+### Security (Never Break)
+- **NEVER log secrets**: tokens, passwords, connection strings
+- Validate all inputs with Pydantic
+- No `*` in CORS origins (production)
 
 ### Pydantic Models
-- Define request/response schemas with Pydantic v2
-- Use descriptive suffixes: `Create`, `Update`, `InDB`, `Public`
-- Validate with `Field()` for constraints (min_length, max_length, ge, le)
-- Use `model_config` instead of inner `Config` class (v2)
-- Use `model_dump()` instead of `dict()` (v2)
+Use suffixes: `UserCreate`, `UserUpdate`, `UserInDB`, `UserPublic`
 
-### FastAPI Specifics
-- Use dependency injection via `Depends()` (never global state)
-- Validate inputs with Pydantic models
-- Set explicit `response_model` and `status_code`
-- Use `Security()` for authentication dependencies
-- Add docstrings (become OpenAPI descriptions)
-- Tag endpoints for organization
+## Template Specifics
+- Files ending in `.jinja` are templates: use `{{ var }}`, `{% if %}`
+- Generated code must be production-ready
 
-### MongoDB / Motor
-- Use Motor for async operations (never synchronous PyMongo in async code)
-- Use PyMongo 3.x for Cosmos DB compatibility
-- Validate ObjectIds before querying
-- Use projections to limit returned fields
-- Create indexes in `utils/indexes.py`
-- Use aggregation pipelines for complex queries
-
-### Testing
-- Use pytest with pytest-asyncio for async tests
-- Test structure: Arrange, Act, Assert
-- Use fixtures for setup/teardown
-- Mock external dependencies (Azure AD, external APIs)
-- Test happy path AND error cases
-- Use descriptive test names (test_create_user_with_duplicate_email_fails)
-
-### Documentation
-- Add docstrings to public functions, classes, and modules
-- Use Google or NumPy docstring format
-- Include examples in docstrings when helpful
-- Document complex algorithms with inline comments
-- Keep README.md updated with setup instructions
-
-### Performance
-- Use database indexes for frequently queried fields
-- Implement pagination for large result sets
-- Use `StreamingResponse` for large payloads
-- Cache expensive computations with `@lru_cache`
-- Profile before optimizing (measure, don't guess)
-
-## Architecture Patterns
-
-### Layered Architecture
-```
-Routers (HTTP)  →  Services (Business Logic)  →  Clients (Data/External APIs)
-```
-- **Routers**: HTTP handling, input validation, response formatting
-- **Services**: Business logic, orchestration, NO FastAPI dependencies
-- **Clients**: Database operations, external API calls, side effects
-
-### Dependency Injection
-- Inject database connections via `Depends(get_database)`
-- Inject auth via `Security(azure_scheme)`
-- Never use global variables or singletons (except settings)
-- Makes testing easier (mock injected dependencies)
-
-### Configuration
-- Use Pydantic Settings for configuration
-- Load from `.env` file (never commit)
-- Provide `.env.example` with safe defaults
-- Validate configuration on startup
-- Use computed fields for derived values
-
-### Database Patterns
-- Local dev: MongoDB Docker container (always)
-- Production: Azure Cosmos DB (MongoDB API)
-- Same code works with both (connection string swap only)
-- Use lifespan context managers for connection pooling
-
-## Development Workflow
-
-### Before Committing
+## Pre-Commit
 ```bash
-# Format code
 uv run ruff format backend
-
-# Lint code
 uv run ruff check backend --fix
-
-# Type check
 uv run mypy backend
-
-# Run tests
 uv run pytest
-
-# Check coverage
-uv run pytest --cov=backend --cov-report=term-missing
 ```
 
-### Docker Development
-```bash
-# Build image
-docker build -t backend:latest .
+## Common Errors to Prevent
+❌ Sync I/O in async functions  
+❌ Forgetting ObjectId.is_valid()  
+❌ Business logic in routers  
+❌ Logging secrets  
+❌ PyMongo 4.x  
 
-# Run with compose (backend + MongoDB)
-docker compose up -d
-
-# View logs
-docker compose logs -f backend
-
-# Run tests in Docker
-docker compose exec backend pytest
-```
-
-### Azure Deployment
-```bash
-# Deploy infrastructure
-cd infra && ./deploy.sh
-
-# Push to ACR
-az acr login --name <acr-name>
-docker build -t <acr-name>.azurecr.io/backend:latest .
-docker push <acr-name>.azurecr.io/backend:latest
-```
-
-## Common Mistakes to Avoid
-
-❌ Using synchronous I/O in async functions  
-❌ Not validating ObjectId strings before querying  
-❌ Logging secrets or connection strings  
-❌ Using global state instead of dependency injection  
-❌ Mixing business logic in routers  
-❌ Not handling None/null cases  
-❌ Using PyMongo 4.x (breaks Cosmos DB compatibility)  
-❌ Committing `.env` files  
-❌ Using `*` in CORS origins (production)  
-❌ Not adding indexes for queried fields  
-
-## Quick Reference
-
-### uv Commands
-- `uv sync` - Install dependencies
-- `uv add <package>` - Add dependency
-- `uv run <command>` - Run in venv
-- `uv tool install <tool>` - Install global tool
-
-### Ruff Commands
-- `ruff check <path>` - Lint code
-- `ruff check <path> --fix` - Fix auto-fixable issues
-- `ruff format <path>` - Format code
-
-### Pytest Commands
-- `pytest` - Run all tests
-- `pytest -v` - Verbose output
-- `pytest -k <pattern>` - Run matching tests
-- `pytest --cov=backend` - Coverage report
-- `pytest -x` - Stop on first failure
-
-### Docker Commands
-- `docker compose up -d` - Start services
-- `docker compose down` - Stop services
-- `docker compose logs -f <service>` - Follow logs
-- `docker compose exec <service> <cmd>` - Run command
-
-## Resources
-
-- **FastAPI**: https://fastapi.tiangolo.com/
-- **Pydantic v2**: https://docs.pydantic.dev/latest/
-- **Motor**: https://motor.readthedocs.io/
-- **uv**: https://github.com/astral-sh/uv
-- **Ruff**: https://docs.astral.sh/ruff/
-- **Azure Container Apps**: https://learn.microsoft.com/en-us/azure/container-apps/
-
----
-
-For detailed patterns and examples, see `.cursorrules` in the root directory.
-
+See `.cursorrules` for detailed patterns and examples.
