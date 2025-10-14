@@ -24,179 +24,140 @@ _exclude:
   - "{% if git_hook_tool != 'pre-commit' %}.pre-commit-config.yaml.jinja{% endif %}"
 
 # ============================================================================
-# PROJECT IDENTITY
+# PROJECT IDENTITY - Minimal User Input
 # ============================================================================
 
 project_name:
   type: str
-  help: |
-    What is your backend project name?
-    This will be used in documentation and API title.
-  default: "Alkeme Template Backend"
+  help: What is your backend project name?
+  placeholder: "My Backend API"
   validator: >-
     {% if not project_name or project_name.strip() == '' %}
     Project name cannot be empty
     {% endif %}
 
-package_name:
-  type: str
-  help: |
-    Python package name (lowercase with underscores)
-    This will be the folder name and package identifier.
-  placeholder: "alkeme_backend"
-  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') }}"
-  validator: >-
-    {% if not (package_name | regex_search('^[a-z][a-z0-9_]*$')) %}
-    {{package_name}} is not a valid Python package name. Must start with lowercase letter and contain only lowercase letters, numbers, and underscores.
-    {% endif %}
-
 project_description:
   type: str
   help: Short description of your project
-  placeholder: "A modern FastAPI backend application"
-  default: "A modern FastAPI backend application with MongoDB and Azure deployment"
-  validator: >-
-    {% if not project_description or project_description.strip() == '' %}
-    Project description cannot be empty
-    {% endif %}
+  default: "{{ project_name }} - FastAPI backend with MongoDB and Azure deployment"
+
+# Auto-calculated values (not shown to user)
+package_name:
+  type: str
+  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') | regex_replace('[^a-z0-9_]', '') }}"
+  when: false
 
 owner_org:
   type: str
-  help: Owning organization or team name
   default: "Alkeme"
+  when: false
 
 author_name:
   type: str
-  help: Your name or organization name
-  placeholder: "Your Name"
   default: "Intelligent Solutions Alkeme Team"
-  validator: >-
-    {% if not author_name or author_name.strip() == '' %}
-    Author name cannot be empty
-    {% endif %}
+  when: false
 
 author_email:
   type: str
-  help: Contact email address
-  placeholder: "email@example.com"
   default: "dev@alkeme.com"
-  validator: >-
-    {% if not author_email or author_email.strip() == '' %}
-    Author email cannot be empty
-    {% elif '@' not in author_email %}
-    Must be a valid email address
-    {% endif %}
+  when: false
 
 repository_url:
   type: str
-  help: Git repository URL (leave empty if not yet created)
   default: ""
-  placeholder: "https://github.com/Alkeme-Insurance/{{ package_name }}"
+  when: false
 
 # ============================================================================
-# FEATURE FLAGS
-# ============================================================================
-
-use_azure_auth:
-  type: bool
-  help: |
-    Include Azure AD authentication (fastapi-azure-auth)?
-    Adds Microsoft authentication with SSO capabilities.
-  default: true
-
-deploy_cosmos_db:
-  type: bool
-  help: |
-    Deploy Azure Cosmos DB in production?
-    Note: Local development always uses MongoDB Docker container.
-    This only affects Azure deployment infrastructure.
-  default: true
-
-# ============================================================================
-# DEVELOPMENT TOOLS
+# TECHNOLOGY STACK - Smart Defaults
 # ============================================================================
 
 python_version:
   type: str
-  help: |
-    Which version of Python do you want to use?
-  choices:
-    - "3.10"
-    - "3.11"
-    - "3.12"
-    - "3.13"
   default: "3.12"
+  when: false  # Use latest stable, don't ask
+
+# ============================================================================
+# FEATURE FLAGS - All Enabled by Default
+# ============================================================================
+
+use_azure_auth:
+  type: bool
+  default: true
+  when: false  # Enable by default
+
+deploy_cosmos_db:
+  type: bool
+  default: true
+  when: false  # Enable by default
 
 use_git_hooks:
   type: bool
-  help: |
-    Setup git hooks for secret scanning?
-    Prevents passwords, API keys, and credentials from being committed.
   default: true
+  when: false  # Enable by default
 
 git_hook_tool:
   type: str
-  help: Choose secret scanning tool for git hooks
-  choices:
-    - "detect-secrets"
-    - "pre-commit"
-  default: "detect-secrets"
-  when: "{{ use_git_hooks }}"
+  default: "pre-commit"
+  when: false  # Use pre-commit by default
 
 # ============================================================================
-# AZURE DEPLOYMENT CONFIGURATION
+# AZURE DEPLOYMENT - Minimal Configuration
 # ============================================================================
 
 use_azure_deployment:
   type: bool
-  help: |
-    Generate Azure (AKS) deployment infrastructure with Bicep?
-    Includes ACR, AKS cluster, Key Vault, and Kubernetes manifests.
   default: true
-
-azure_region:
-  type: str
-  help: Azure region for deployment
-  default: "eastus"
-  when: "{{ use_azure_deployment }}"
+  when: false  # Enable by default
 
 azure_environment:
   type: str
-  help: Environment name for Azure resources
+  help: Environment for Azure deployment
   choices:
     - dev
     - staging
     - prod
   default: dev
-  when: "{{ use_azure_deployment }}"
+
+# Auto-calculated Azure values
+azure_region:
+  type: str
+  default: "eastus"
+  when: false
 
 azure_resource_group:
   type: str
-  help: Azure resource group name
   default: "rg-{{ package_name }}-{{ azure_environment }}"
-  when: "{{ use_azure_deployment }}"
+  when: false
 
 azure_container_registry_name:
   type: str
-  help: |
-    Container registry name (alphanumeric only, globally unique)
-    Will be suffixed with .azurecr.io
   default: "{{ package_name | replace('_', '') }}{{ azure_environment }}acr"
-  when: "{{ use_azure_deployment }}"
+  when: false
 
 backend_cors_origins:
   type: str
-  help: |
-    Backend CORS origins (comma-separated)
-    Domains allowed to access the API
-  default: "http://localhost:3000,http://localhost:5173"
-  when: "{{ use_azure_deployment }}"
+  default: "http://localhost:3000,http://localhost:5173,http://localhost:8080"
+  when: false
 
 # ============================================================================
 # POST-GENERATION TASKS
 # ============================================================================
 
 _tasks:
+  # Validate gh CLI is installed
+  - command: |
+      if ! which gh > /dev/null 2>&1; then
+        echo "❌ ERROR: GitHub CLI (gh) is required but not installed"
+        echo "📦 Install from: https://cli.github.com/"
+        echo ""
+        echo "Quick install:"
+        echo "  macOS:   brew install gh"
+        echo "  Linux:   See https://github.com/cli/cli/blob/trunk/docs/install_linux.md"
+        echo "  Windows: winget install GitHub.cli"
+        exit 1
+      fi
+      echo "✅ GitHub CLI detected"
+
   # Initialize git repository
   - command: '[ ! -d .git ] && git init -q || true'
     when: true
@@ -266,16 +227,21 @@ _metadata:
   template_name: "Alkeme Backend Template"
   template_version: "0.1.0"
   template_description: "Production-ready FastAPI + MongoDB backend template with Docker and Azure deployment"
-  template_url: "https://github.com/alkeme/alkeme-template-backend"
+  template_url: "https://github.com/Alkeme-Insurance/alkeme-template-backend"
   copier_version: "9.2.0"
   features:
     - "⚡ Modern Backend: FastAPI + Pydantic v2 + Motor (async MongoDB)"
-    - "🐍 Python 3.10-3.13 Support"
+    - "🐍 Python 3.12 (latest stable)"
     - "📦 uv Package Manager: Fast and reliable Python package management"
     - "🐳 Docker Support: Multi-stage builds with MongoDB"
-    - "🔐 Authentication: Azure AD (MSAL) integration ready"
-    - "☁️ Azure Deployment: Bicep infrastructure and Container Apps support"
+    - "🔐 Authentication: Azure AD (MSAL) integration enabled"
+    - "☁️ Azure Deployment: Bicep infrastructure for AKS with Cosmos DB"
     - "🧪 Testing: Pytest setup with async support"
     - "🔧 Pre-commit Hooks: Automated secret scanning"
-    - "🏗️ CI Ready: Structured for GitHub Actions workflows"
-
+    - "🏗️ CI/CD: GitHub Actions workflows with OIDC"
+    - "📚 AI Rules: Modular Cursor rules for code quality"
+  configuration:
+    - "✨ Minimal Questions: Only project name and environment"
+    - "🤖 Auto-Detection: Package name auto-derived from project name"
+    - "⚙️ Smart Defaults: All features enabled, production-ready"
+    - "🔧 Requires: GitHub CLI (gh) for automation"
