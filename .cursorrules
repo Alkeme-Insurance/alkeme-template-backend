@@ -1,414 +1,52 @@
-# Alkeme Backend Template - Cursor AI Rules
+# ⚠️ DEPRECATED - This file is legacy
 
-You are an expert in Python, FastAPI, async programming, MongoDB/Motor, and Azure deployment.
+**This `.cursorrules` file is deprecated and will be removed in a future update.**
 
-## Rules Organization
-
-This project uses modular rules for better organization:
-- **`.cursor/rules/project.md`** - Project architecture, FastAPI patterns, deployment
-- **`.cursor/rules/python.md`** - Python code style, type hints, async patterns
-- **`.cursor/rules/general.md`** - Security, code quality, git practices, testing
-
-The rules below provide quick reference. See individual files for comprehensive guidance.
-
-## Project Context
-
-This is a **Copier template repository** that generates production-ready FastAPI backends with:
-- FastAPI + Pydantic v2 + Motor (async MongoDB)
-- Azure AD authentication via fastapi-azure-auth
-- Docker deployment with uv package manager
-- Azure Container Apps + Cosmos DB deployment via Bicep
-- Local dev: MongoDB Docker container → Production: Azure Cosmos DB
-
-**Critical**: Files ending in `.jinja` are Jinja2 templates. Use `{{ variable }}` for substitution.
-
-## Code Style
-
-- **Python 3.10+ with type hints on ALL function signatures**
-- Use `from __future__ import annotations` for forward references
-- PEP 8 strict, 100 char lines, double quotes
-- Prefer `list[str]` over `List[str]`, `str | None` over `Optional[str]`
-
-### Naming (User Preference)
-```python
-# Files & modules
-user_service.py, mongo_db.py  # lowercase_with_underscores
-
-# Functions & variables
-def get_user_by_id(user_id: str) -> UserPublic | None:
-    is_active = True  # Booleans: is_, has_, can_ prefix
-
-# Classes
-class UserService:  # PascalCase
-
-# Constants
-MAX_RETRIES = 3  # UPPER_CASE
-```
-
-## Architecture Pattern (Critical)
-
-**Layered Architecture - NOT MVT:**
-```
-Routers (HTTP layer) → Services (Business logic) → Clients (Data/External APIs)
-```
-
-### Routers (`backend/routers/`)
-- Handle HTTP requests, validate with Pydantic, return responses
-- Use `Depends()` for DB and auth injection
-- Minimal logic, delegate to services
-
-```python
-from fastapi import APIRouter, Depends, HTTPException, Security
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
-router = APIRouter(prefix="/users", tags=["users"])
-
-@router.post("/", response_model=UserPublic, status_code=201)
-async def create_user(
-    user_data: UserCreate,
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    claims: dict = Security(azure_scheme),  # if auth enabled
-) -> UserPublic:
-    """Create a new user."""
-    service = UserService(db)
-    return await service.create_user(user_data)
-```
-
-### Services (`backend/services/`)
-- Pure business logic, NO FastAPI dependencies
-- Orchestrate data operations
-- Return/receive typed objects (RORO pattern)
-
-```python
-class UserService:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.collection = db["users"]
-    
-    async def create_user(self, user_data: UserCreate) -> UserPublic:
-        # Business validation
-        if await self.collection.find_one({"email": user_data.email}):
-            raise ValueError("Email already exists")
-        
-        user_dict = user_data.model_dump()
-        user_dict["created_at"] = datetime.utcnow()
-        result = await self.collection.insert_one(user_dict)
-        user_dict["_id"] = result.inserted_id
-        return UserPublic(**user_dict)
-```
-
-### Clients (`backend/clients/`)
-- Database operations, external API calls
-- No business logic, just data access
-
-## FastAPI Patterns
-
-### Application Setup
-```python
-from contextlib import asynccontextmanager
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    async with mongo_lifespan():
-        if settings.AZURE_TENANT_ID:
-            await azure_scheme.openid_config.load_config()
-        await ensure_indexes()
-        yield
-
-app = FastAPI(lifespan=lifespan)
-
-# Health check (no auth)
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
-```
-
-### Dependency Injection
-```python
-# Use Depends(), NEVER global state
-from backend.clients.mongo_db import get_database
-from backend.auth import azure_scheme
-
-async def endpoint(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    claims: dict = Security(azure_scheme),
-):
-    pass
-```
-
-### Error Handling (Guard Clauses)
-```python
-async def get_user(user_id: str):
-    # Validate early, return immediately
-    if not ObjectId.is_valid(user_id):
-        raise HTTPException(status_code=400, detail="Invalid ID format")
-    
-    user = await service.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="User inactive")
-    
-    return user  # Happy path unindented
-```
-
-## Pydantic v2 Models
-
-Use descriptive suffixes: `Create`, `Update`, `InDB`, `Public`
-
-```python
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
-
-class UserCreate(BaseModel):
-    """For POST requests."""
-    email: EmailStr
-    name: str = Field(..., min_length=1, max_length=100)
-    password: str = Field(..., min_length=8)
-
-class UserUpdate(BaseModel):
-    """For PUT/PATCH requests."""
-    email: EmailStr | None = None
-    name: str | None = None
-    is_active: bool | None = None
-
-class UserPublic(BaseModel):
-    """API response (no sensitive fields)."""
-    id: str = Field(alias="_id")
-    email: EmailStr
-    name: str
-    is_active: bool
-    
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-```
-
-## MongoDB / Motor (Async Only)
-
-**CRITICAL**: Use PyMongo 3.x (NOT 4.x) for Azure Cosmos DB compatibility.
-
-```python
-# Client setup with lifespan
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-
-_client: AsyncIOMotorClient | None = None
-_database: AsyncIOMotorDatabase | None = None
-
-@asynccontextmanager
-async def mongo_lifespan() -> AsyncGenerator[None, None]:
-    global _client, _database
-    _client = AsyncIOMotorClient(settings.MONGODB_URI)
-    _database = _client.get_default_database()
-    await _client.admin.command("ping")
-    yield
-    if _client:
-        _client.close()
-
-def get_database() -> AsyncIOMotorDatabase:
-    if _database is None:
-        raise RuntimeError("Database not initialized")
-    return _database
-```
-
-### Query Patterns
-```python
-# Always validate ObjectId strings
-from bson import ObjectId
-
-if not ObjectId.is_valid(user_id):
-    raise HTTPException(status_code=400, detail="Invalid ID")
-
-# Async operations
-user = await db.users.find_one({"_id": ObjectId(user_id)})
-users = await db.users.find({"is_active": True}).skip(skip).limit(limit).to_list(limit)
-
-# Updates
-await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": update_dict})
-
-# Use projections to limit fields
-await db.users.find_one({"_id": ObjectId(user_id)}, {"password": 0})
-```
-
-### Indexes
-```python
-# backend/utils/indexes.py
-async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
-    await db.users.create_index("email", unique=True)
-    await db.projects.create_index([("owner_id", 1), ("created_at", -1)])
-```
-
-## Async Programming
-
-**Use `async def` for ALL I/O operations:**
-
-```python
-# ✅ Correct
-async def get_user(user_id: str):
-    user = await db.users.find_one({"_id": ObjectId(user_id)})
-    return user
-
-# ✅ Parallel operations
-results = await asyncio.gather(
-    db.users.find_one({"_id": user_id}),
-    db.projects.find({"owner_id": user_id}).to_list(10),
-)
-
-# ❌ NEVER block the event loop
-import requests  # DON'T use in async code
-response = requests.get(url)  # WRONG
-
-# ✅ Use async libraries
-import httpx
-async with httpx.AsyncClient() as client:
-    response = await client.get(url)
-```
-
-## Configuration
-
-```python
-from pydantic import Field, computed_field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=True,
-    )
-    
-    MONGODB_URI: str = Field(default="mongodb://localhost:27017")
-    BACKEND_CORS_ORIGINS: str = "http://localhost:3000"
-    AZURE_TENANT_ID: str | None = None
-    AZURE_CLIENT_ID: str | None = None
-    DEV_NO_AUTH: bool = False
-    
-    def get_cors_origins(self) -> list[str]:
-        return [o.strip() for o in self.BACKEND_CORS_ORIGINS.split(",")]
-    
-    @computed_field
-    @property
-    def SCOPE_NAME(self) -> str:
-        return f"api://{self.AZURE_CLIENT_ID}/user_impersonation" if self.AZURE_CLIENT_ID else ""
-
-settings = Settings()
-```
-
-## Security (Critical)
-
-### NEVER Log Secrets
-```python
-# ❌ NEVER
-logger.info(f"Connecting to {settings.MONGODB_URI}")  # WRONG
-logger.debug(f"Token: {token}")  # WRONG
-
-# ✅ Correct
-logger.info("Connecting to database")
-logger.debug("Token received")
-```
-
-### Input Validation
-- Use Pydantic models for ALL request bodies
-- Use `Query()`, `Path()`, `Field()` for validation
-- Return 422 for validation errors (automatic with Pydantic)
-
-### CORS
-```python
-# ❌ NEVER in production
-allow_origins=["*"]  # WRONG
-
-# ✅ Specify exact origins
-allow_origins=settings.get_cors_origins()
-```
-
-## Testing
-
-```python
-# tests/conftest.py
-import pytest
-from fastapi.testclient import TestClient
-
-@pytest.fixture
-def client():
-    return TestClient(app)
-
-@pytest.fixture
-async def test_db():
-    client = AsyncIOMotorClient("mongodb://localhost:27017")
-    db = client["test_db"]
-    yield db
-    await client.drop_database("test_db")
-    client.close()
-
-# Test pattern
-@pytest.mark.asyncio
-async def test_create_user(test_db):
-    service = UserService(test_db)
-    user = await service.create_user(UserCreate(
-        email="test@example.com",
-        name="Test",
-        password="secure123",
-    ))
-    assert user.email == "test@example.com"
-```
-
-## Docker & Deployment
-
-### Dockerfile (Multi-stage with uv)
-```dockerfile
-FROM python:3.12-slim AS builder
-WORKDIR /app
-RUN pip install uv
-COPY pyproject.toml ./
-RUN uv sync --no-dev
-
-FROM python:3.12-slim
-WORKDIR /app
-COPY --from=builder /app/.venv /app/.venv
-COPY backend/ ./backend/
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
-ENV PATH="/app/.venv/bin:$PATH"
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "80"]
-```
-
-### Database Strategy
-- **Local dev**: MongoDB Docker container (docker-compose.yml)
-- **Production**: Azure Cosmos DB (MongoDB API) via Bicep
-- Same code works with both (connection string swap only)
-
-## Common Mistakes to Avoid
-
-❌ Using sync I/O in async functions  
-❌ Not validating ObjectId strings  
-❌ Logging secrets/connection strings  
-❌ Using global state instead of Depends()  
-❌ Business logic in routers  
-❌ PyMongo 4.x (breaks Cosmos DB)  
-❌ Committing .env files  
-❌ `*` in CORS origins (production)  
-
-## Code Quality Checklist
-
-Before committing:
-```bash
-uv run ruff format backend
-uv run ruff check backend --fix
-uv run mypy backend
-uv run pytest --cov=backend
-```
-
-## Tools
-
-- **Package manager**: `uv` (10-100x faster than pip)
-- **Linter/formatter**: `ruff` (replaces black, isort, flake8)
-- **Type checker**: `mypy`
-- **Testing**: `pytest` + `pytest-asyncio`
-- **Pre-commit**: `detect-secrets` (scan for secrets)
-
-## References
-
-- FastAPI: https://fastapi.tiangolo.com/
-- Pydantic v2: https://docs.pydantic.dev/latest/
-- Motor: https://motor.readthedocs.io/
-- uv: https://github.com/astral-sh/uv
+Please use the new standard format:
+- **Primary**: [`AGENTS.md`](./AGENTS.md) - Main AI agent rules
+- **Detailed**: [`.cursor/rules/`](./.cursor/rules/) - Modular rules organization
 
 ---
 
-**Remember**: This template generates production-ready code. All files should be clean, well-typed, and deployable to Azure Container Apps with minimal configuration.
+# Alkeme Backend Template - Legacy Rules Reference
+
+For the current, maintained rules, see [`AGENTS.md`](./AGENTS.md)
+
+## Quick Migration Guide
+
+The rules have been reorganized into a modular structure:
+
+1. **`AGENTS.md`** (root) - Primary AI agent rules (replaces this file)
+2. **`.cursor/rules/project.md`** - Architecture & FastAPI patterns
+3. **`.cursor/rules/python.md`** - Python code style & implementation
+4. **`.cursor/rules/general.md`** - Security, testing, workflow
+
+See [`.cursor/rules/README.md`](./.cursor/rules/README.md) for complete documentation.
+
+---
+
+## Legacy Content (For Reference Only)
+
+This content is maintained in the new format. Use [`AGENTS.md`](./AGENTS.md) instead.
+
+### Project Context
+
+This is a **Copier template repository** for FastAPI backends with:
+- FastAPI + Pydantic v2 + Motor (async MongoDB)
+- Azure AD authentication
+- Docker with uv package manager
+- Azure Container Apps + Cosmos DB via Bicep
+
+### Critical Rules
+
+**Architecture**: Routers → Services → Clients
+
+**Type hints**: Required on ALL functions
+
+**Async**: Use `async def` for ALL I/O operations
+
+**MongoDB**: Must use PyMongo 3.x for Cosmos DB compatibility
+
+**Security**: NEVER log secrets
+
+See [`AGENTS.md`](./AGENTS.md) for complete rules.

@@ -2,6 +2,8 @@
 
 This directory contains modular rules for the Alkeme Backend Template project. Rules are organized by concern for easier maintenance and reference.
 
+> **Note**: These rules are referenced by `AGENTS.md` in the project root, which is the new standard format for AI agent guidance (replacing legacy `.cursorrules`).
+
 ## File Structure
 
 ### 📋 project.md (333 lines)
@@ -57,16 +59,17 @@ Covers:
 
 ## How These Rules Work Together
 
-1. **`.cursorrules`** (root) - Quick reference with inline examples, references these files
+1. **`AGENTS.md`** (root) - Primary AI agent rules file (new standard)
 2. **`project.md`** - Architecture and project-specific patterns
 3. **`python.md`** - Python code style and implementation details  
 4. **`general.md`** - Cross-cutting concerns (security, testing, workflow)
+5. **`.cursorrules`** (legacy) - Deprecated, will be removed
 
 ## Rules Hierarchy
 
 ```
-.cursorrules (405 lines)
-    ├─ Quick reference with code examples
+AGENTS.md (Primary - new standard)
+    ├─ Quick critical rules with examples
     └─ References detailed rules below
         
 .cursor/rules/
@@ -77,11 +80,13 @@ Covers:
 
 ## For AI Assistants
 
+Primary entry point: **`AGENTS.md`** (root)
+
 When helping with:
 - **Architecture questions** → Reference `project.md`
 - **Code implementation** → Reference `python.md`
 - **Security/testing/workflow** → Reference `general.md`
-- **Quick patterns** → Use `.cursorrules` (root)
+- **Quick patterns** → Use `AGENTS.md`
 
 ## For Developers
 
@@ -111,11 +116,12 @@ When updating rules:
 
 ## Total Documentation
 
-- `.cursorrules`: 405 lines
+- `AGENTS.md`: ~200 lines (primary entry point)
 - `project.md`: 333 lines
 - `python.md`: 498 lines
 - `general.md`: 601 lines
-- **Total**: 1,837 lines of comprehensive guidance
+- `README.md`: ~120 lines
+- **Total**: ~1,752 lines of comprehensive guidance
 
 ---
 
