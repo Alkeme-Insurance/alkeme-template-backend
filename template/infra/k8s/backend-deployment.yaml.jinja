@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: {{ package_name }}
+  labels:
+    app: backend
+    tier: api
+    environment: {{ azure_environment }}
+spec:
+  replicas: {{ '3' if azure_environment == 'prod' else '2' }}
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        tier: api
+    spec:
+      containers:
+      - name: backend
+        image: <ACR_LOGIN_SERVER>/{{ package_name }}-backend:latest  # Replace with your ACR
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: {{ package_name }}-secrets
+              key: mongodb-uri
+        - name: BACKEND_CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: {{ package_name }}-config
+              key: BACKEND_CORS_ORIGINS
+        - name: DEV_NO_AUTH
+          valueFrom:
+            configMapKeyRef:
+              name: {{ package_name }}-config
+              key: DEV_NO_AUTH
+{% if use_azure_auth -%}
+        - name: AZURE_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ package_name }}-secrets
+              key: azure-client-id
+        - name: AZURE_TENANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ package_name }}-secrets
+              key: azure-tenant-id
+        - name: OPENAPI_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ package_name }}-secrets
+              key: azure-client-id
+{% endif -%}
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: {{ '1000m' if azure_environment == 'prod' else '500m' }}
+            memory: {{ '2Gi' if azure_environment == 'prod' else '1Gi' }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+  namespace: {{ package_name }}
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 80
+    protocol: TCP
+    name: http
+  selector:
+    app: backend
+
+

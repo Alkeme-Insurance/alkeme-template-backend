@@ -1,0 +1,34 @@
+using './main.bicep'
+
+param projectName = '{{ package_name }}'
+param environment = '{{ azure_environment }}'
+param location = '{{ azure_region }}'
+param adminObjectId = 'YOUR_AZURE_AD_OBJECT_ID'  // Will be auto-populated by deploy.sh
+
+// Azure AD Integration
+param enableAzureAD = true
+{% if use_azure_auth %}
+// These will be loaded from .env file by deploy.sh
+param azureClientId = ''  // Loaded from AZURE_CLIENT_ID or VITE_AZURE_CLIENT_ID
+param azureTenantId = ''  // Loaded from AZURE_TENANT_ID or VITE_AZURE_TENANT_ID
+param azureApiScope = ''  // Loaded from AZURE_API_SCOPE or VITE_AZURE_API_SCOPE
+{% endif %}
+// Backend configuration
+param backendCorsOrigins = '{{ backend_cors_origins }}'
+
+// Database strategy
+param deployCosmosDb = {{ 'true' if deploy_cosmos_db else 'false' }}
+param mongodbUri = ''  // Only used if deployCosmosDb=false (bring your own MongoDB)
+
+// GitHub OIDC for CI/CD (optional)
+param githubRepository = '{% if repository_url %}{{ repository_url.split('/')[-2:] | join('/') }}{% endif %}'  // Format: owner/repo
+
+// Monitoring
+param enableMonitoring = true
+
+// AKS Configuration
+param nodeCount = {{ '3' if azure_environment == 'prod' else '2' }}
+param nodeVmSize = 'Standard_D2s_v3'
+param kubernetesVersion = '1.29.0'
+
+

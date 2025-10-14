@@ -1,0 +1,211 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main{% if azure_environment != 'prod' %}, develop{% endif %}]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "{{ python_version }}"
+{% if use_azure_deployment -%}
+  ACR_NAME: "{{ azure_container_registry_name }}"
+  AKS_CLUSTER: "{{ package_name }}-{{ azure_environment }}-aks"
+  RESOURCE_GROUP: "{{ azure_resource_group }}"
+  NAMESPACE: "{{ package_name }}"
+{% endif -%}
+
+jobs:
+  # Job 1: Lint, Type Check, and Test
+  quality-checks:
+    name: Code Quality & Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+      
+      - name: Set up Python {% raw %}${{ env.PYTHON_VERSION }}{% endraw %}
+
+        uses: actions/setup-python@v5
+        with:
+          python-version: {% raw %}${{ env.PYTHON_VERSION }}{% endraw %}
+
+      
+      - name: Install dependencies
+        run: uv sync
+      
+      - name: Lint with ruff
+        run: |
+          uv run ruff format --check backend
+          uv run ruff check backend
+      
+      - name: Type check with mypy
+        run: uv run mypy backend
+        continue-on-error: true  # Don't fail on type errors initially
+      
+      - name: Run tests
+        run: uv run pytest --cov=backend --cov-report=xml --cov-report=term-missing
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+        continue-on-error: true
+
+  # Job 2: Build Docker Image
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: quality-checks
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: {{ package_name }}:{% raw %}${{ github.sha }}{% endraw %}
+
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+{% if use_azure_deployment -%}
+
+  # Job 3: Deploy to Azure AKS
+  deploy-azure:
+    name: Deploy to Azure AKS
+    runs-on: ubuntu-latest
+    needs: [quality-checks, docker-build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: {{ azure_environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+{% if repository_url -%}
+      # Option 1: GitHub OIDC (Workload Identity) - Recommended
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: {% raw %}${{ secrets.AZURE_CLIENT_ID }}{% endraw %}
+
+          tenant-id: {% raw %}${{ secrets.AZURE_TENANT_ID }}{% endraw %}
+
+          subscription-id: {% raw %}${{ secrets.AZURE_SUBSCRIPTION_ID }}{% endraw %}
+
+{% else -%}
+      # Option 2: Service Principal (Alternative)
+      # Uncomment if not using OIDC
+      # - name: Azure Login (Service Principal)
+      #   uses: azure/login@v2
+      #   with:
+      #     creds: {% raw %}${{ secrets.AZURE_CREDENTIALS }}{% endraw %}
+
+{% endif -%}
+      
+      - name: Login to Azure Container Registry
+        run: |
+          az acr login --name {% raw %}${{ env.ACR_NAME }}{% endraw %}
+
+      
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG={% raw %}${{ env.ACR_NAME }}{% endraw %}.azurecr.io/{{ package_name }}-backend:{% raw %}${{ github.sha }}{% endraw %}
+
+          IMAGE_LATEST={% raw %}${{ env.ACR_NAME }}{% endraw %}.azurecr.io/{{ package_name }}-backend:latest
+          
+          docker build -t $IMAGE_TAG -t $IMAGE_LATEST -f Dockerfile .
+          docker push $IMAGE_TAG
+          docker push $IMAGE_LATEST
+          
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+      
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group {% raw %}${{ env.RESOURCE_GROUP }}{% endraw %} \
+            --name {% raw %}${{ env.AKS_CLUSTER }}{% endraw %} \
+            --overwrite-existing
+      
+      - name: Update Kubernetes deployment
+        run: |
+          # Update the image in the deployment
+          kubectl set image deployment/backend \
+            backend={% raw %}${{ env.IMAGE_TAG }}{% endraw %} \
+            -n {% raw %}${{ env.NAMESPACE }}{% endraw %} \
+            --record
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/backend \
+            -n {% raw %}${{ env.NAMESPACE }}{% endraw %} \
+            --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployments -n {% raw %}${{ env.NAMESPACE }}{% endraw %}
+
+          
+          echo "=== Pod Status ==="
+          kubectl get pods -n {% raw %}${{ env.NAMESPACE }}{% endraw %} -l app=backend
+          
+          echo "=== Service Status ==="
+          kubectl get svc -n {% raw %}${{ env.NAMESPACE }}{% endraw %}
+
+      
+      - name: Get application URL
+        id: get-url
+        run: |
+          # Try to get ingress URL if configured
+          INGRESS_HOST=$(kubectl get ingress -n {% raw %}${{ env.NAMESPACE }}{% endraw %} \
+            -o jsonpath='{.items[0].spec.rules[0].host}' 2>/dev/null || echo "")
+          
+          if [ -n "$INGRESS_HOST" ]; then
+            echo "url=https://$INGRESS_HOST" >> $GITHUB_OUTPUT
+            echo "Application URL: https://$INGRESS_HOST"
+          else
+            echo "url=ClusterIP (no external access)" >> $GITHUB_OUTPUT
+            echo "Application is running on ClusterIP (internal only)"
+          fi
+      
+      - name: Comment on commit
+        uses: actions/github-script@v7
+        if: success()
+        with:
+          script: |
+            const url = '{% raw %}${{ steps.get-url.outputs.url }}{% endraw %}';
+            const sha = context.sha.substring(0, 7);
+            const body = `🚀 **Deployed to Azure AKS** ({{ azure_environment }})
+            
+            - **Commit**: \`${sha}\`
+            - **Image**: \`{{ package_name }}-backend:{% raw %}${{ github.sha }}{% endraw %}\`
+            - **URL**: ${url}
+            - **Namespace**: \`{{ package_name }}\`
+            
+            ✅ Deployment successful!`;
+            
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: body
+            });
+{% endif -%}

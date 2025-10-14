@@ -1,0 +1,367 @@
+# Azure CI/CD Setup Guide
+
+This guide explains how to configure GitHub Actions to deploy {{ project_name }} to Azure AKS.
+
+## Prerequisites
+
+- Azure subscription with Contributor access
+- Azure CLI installed locally
+- GitHub repository created
+- Infrastructure deployed (see `infra/README.md`)
+
+## Authentication Methods
+
+Choose **one** of the following authentication methods:
+
+### Option 1: GitHub OIDC (Workload Identity) - ⭐ Recommended
+
+This method uses OpenID Connect for secure, keyless authentication. **No secrets to rotate!**
+
+{% if repository_url -%}
+#### Setup Steps
+
+Your infrastructure deployment already created a GitHub workload identity. You just need to add the secrets to GitHub.
+
+1. **Get Identity Details**
+
+After running `infra/bicep/deploy.sh`, check the output for:
+```bash
+GitHub Identity:   {{ package_name }}-{{ azure_environment }}-github-identity
+Client ID:         <client-id>
+```
+
+Or retrieve manually:
+```bash
+# Get the deployment outputs
+RESOURCE_GROUP="{{ azure_resource_group }}"
+DEPLOYMENT_NAME=$(az deployment group list \
+  --resource-group $RESOURCE_GROUP \
+  --query "[0].name" -o tsv)
+
+# Get identity details
+AZURE_CLIENT_ID=$(az deployment group show \
+  --resource-group $RESOURCE_GROUP \
+  --name $DEPLOYMENT_NAME \
+  --query properties.outputs.githubIdentityClientId.value -o tsv)
+
+AZURE_TENANT_ID=$(az account show --query tenantId -o tsv)
+AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+echo "AZURE_CLIENT_ID: $AZURE_CLIENT_ID"
+echo "AZURE_TENANT_ID: $AZURE_TENANT_ID"
+echo "AZURE_SUBSCRIPTION_ID: $AZURE_SUBSCRIPTION_ID"
+```
+
+2. **Add GitHub Secrets**
+
+Go to your repository: **Settings → Secrets and variables → Actions → New repository secret**
+
+Add these three secrets:
+
+| Secret Name | Value | Description |
+|-------------|-------|-------------|
+| `AZURE_CLIENT_ID` | `<client-id>` | GitHub workload identity client ID |
+| `AZURE_TENANT_ID` | `<tenant-id>` | Your Azure AD tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | `<subscription-id>` | Your Azure subscription ID |
+
+3. **Verify Permissions**
+
+The GitHub identity created during deployment has these permissions:
+- ✅ ACR Pull (read images from container registry)
+- ✅ Key Vault Secrets User (read secrets for deployment)
+- ✅ AKS Contributor (deploy to Kubernetes cluster)
+
+4. **Test the Workflow**
+
+Push a commit to trigger the CI/CD pipeline:
+```bash
+git commit --allow-empty -m "test: trigger CI/CD"
+git push origin main
+```
+
+#### How It Works
+
+GitHub OIDC allows GitHub Actions to exchange a short-lived token for Azure access tokens without storing any credentials. The workflow authenticates using:
+```yaml
+- uses: azure/login@v2
+  with:
+    client-id: {% raw %}${{ secrets.AZURE_CLIENT_ID }}{% endraw %}
+    tenant-id: {% raw %}${{ secrets.AZURE_TENANT_ID }}{% endraw %}
+    subscription-id: {% raw %}${{ secrets.AZURE_SUBSCRIPTION_ID }}{% endraw %}
+```
+{% else -%}
+#### Setup Steps
+
+Since you didn't provide a repository URL during template generation, you'll need to manually create the GitHub OIDC identity.
+
+1. **Create User-Assigned Managed Identity**
+
+```bash
+RESOURCE_GROUP="{{ azure_resource_group }}"
+IDENTITY_NAME="{{ package_name }}-github-identity"
+GITHUB_REPO="owner/repo"  # Replace with your repo
+
+# Create identity
+az identity create \
+  --name $IDENTITY_NAME \
+  --resource-group $RESOURCE_GROUP
+
+# Get identity details
+IDENTITY_CLIENT_ID=$(az identity show \
+  --name $IDENTITY_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --query clientId -o tsv)
+
+IDENTITY_ID=$(az identity show \
+  --name $IDENTITY_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --query id -o tsv)
+```
+
+2. **Create Federated Credential**
+
+```bash
+az identity federated-credential create \
+  --name github-federated-credential \
+  --identity-name $IDENTITY_NAME \
+  --resource-group $RESOURCE_GROUP \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:${GITHUB_REPO}:ref:refs/heads/main" \
+  --audiences api://AzureADTokenExchange
+```
+
+3. **Grant Permissions**
+
+```bash
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+ACR_NAME="{{ azure_container_registry_name }}"
+AKS_NAME="{{ package_name }}-{{ azure_environment }}-aks"
+
+# ACR Pull role
+az role assignment create \
+  --assignee $IDENTITY_CLIENT_ID \
+  --role "AcrPull" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerRegistry/registries/$ACR_NAME"
+
+# AKS Contributor role
+az role assignment create \
+  --assignee $IDENTITY_CLIENT_ID \
+  --role "Contributor" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerService/managedClusters/$AKS_NAME"
+```
+
+4. **Add GitHub Secrets** (same as above)
+{% endif -%}
+---
+
+### Option 2: Service Principal (Alternative)
+
+Use this method if you prefer traditional service principal authentication or can't use OIDC.
+
+#### Setup Steps
+
+1. **Create Service Principal**
+
+```bash
+RESOURCE_GROUP="{{ azure_resource_group }}"
+SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+SP_NAME="{{ package_name }}-github-sp"
+
+# Create service principal with Contributor role on resource group
+az ad sp create-for-rbac \
+  --name $SP_NAME \
+  --role Contributor \
+  --scopes /subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP \
+  --sdk-auth \
+  > azure-credentials.json
+
+# Display credentials (keep secure!)
+cat azure-credentials.json
+```
+
+2. **Grant ACR Push Permission**
+
+```bash
+SP_APP_ID=$(cat azure-credentials.json | jq -r '.clientId')
+ACR_NAME="{{ azure_container_registry_name }}"
+
+az role assignment create \
+  --assignee $SP_APP_ID \
+  --role "AcrPush" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.ContainerRegistry/registries/$ACR_NAME"
+```
+
+3. **Add GitHub Secret**
+
+Go to: **Settings → Secrets and variables → Actions → New repository secret**
+
+| Secret Name | Value | Description |
+|-------------|-------|-------------|
+| `AZURE_CREDENTIALS` | Contents of `azure-credentials.json` | Complete JSON object |
+
+4. **Update Workflow**
+
+In `.github/workflows/ci-cd.yml`, uncomment the service principal login:
+```yaml
+# Uncomment this:
+- name: Azure Login (Service Principal)
+  uses: azure/login@v2
+  with:
+    creds: {% raw %}${{ secrets.AZURE_CREDENTIALS }}{% endraw %}
+
+# And comment out the OIDC login
+```
+
+5. **Clean Up**
+
+```bash
+# Delete the credentials file (don't commit it!)
+rm azure-credentials.json
+```
+
+---
+
+## Workflow Overview
+
+The CI/CD pipeline consists of 3 jobs:
+
+### 1. Code Quality Checks (`quality-checks`)
+- ✅ Linting with ruff
+- ✅ Type checking with mypy
+- ✅ Unit tests with pytest
+- ✅ Coverage reporting (Codecov)
+
+**Runs on:** Every push and pull request
+
+### 2. Docker Build (`docker-build`)
+- ✅ Builds Docker image
+- ✅ Validates Dockerfile
+- ✅ Uses layer caching for speed
+
+**Runs on:** Push to main (after quality checks pass)
+
+### 3. Azure Deployment (`deploy-azure`)
+- ✅ Authenticates to Azure
+- ✅ Builds and pushes image to ACR
+- ✅ Deploys to AKS using kubectl
+- ✅ Waits for rollout completion
+- ✅ Verifies deployment
+- ✅ Comments on commit with status
+
+**Runs on:** Push to main (after build completes)
+
+## Environments
+
+GitHub Environments allow you to:
+- Require manual approval before deployment
+- Set environment-specific secrets
+- Add protection rules
+
+### Setup Production Environment
+
+1. Go to **Settings → Environments → New environment**
+2. Name: `{{ azure_environment }}`
+3. Configure protection rules:
+   - ✅ Required reviewers (for production)
+   - ✅ Wait timer (optional delay)
+   - ✅ Branch restrictions (only `main`)
+
+## Monitoring Deployments
+
+### View Workflow Runs
+
+1. Go to **Actions** tab in your repository
+2. Click on a workflow run to see details
+3. Click on a job to see logs
+
+### Check Deployment Status in Azure
+
+```bash
+# View pods
+kubectl get pods -n {{ package_name }}
+
+# View deployment
+kubectl get deployment -n {{ package_name }}
+
+# View logs
+kubectl logs -f deployment/backend -n {{ package_name }}
+
+# Check rollout history
+kubectl rollout history deployment/backend -n {{ package_name }}
+```
+
+### Rollback a Deployment
+
+If something goes wrong:
+
+```bash
+# Rollback to previous version
+kubectl rollout undo deployment/backend -n {{ package_name }}
+
+# Or rollback to specific revision
+kubectl rollout undo deployment/backend -n {{ package_name }} --to-revision=2
+```
+
+## Troubleshooting
+
+### Authentication Fails
+
+**OIDC:**
+- Verify the three secrets are correctly set in GitHub
+- Check the federated credential subject matches your repo: `repo:owner/repo:ref:refs/heads/main`
+- Ensure identity has required permissions
+
+**Service Principal:**
+- Verify `AZURE_CREDENTIALS` secret contains valid JSON
+- Check service principal hasn't expired
+- Verify it has Contributor + AcrPush roles
+
+### Image Push Fails
+
+- Check ACR exists and name is correct
+- Verify identity/SP has `AcrPush` role
+- Check ACR isn't behind a firewall blocking GitHub IPs
+
+### Deployment Fails
+
+- Verify AKS cluster is running
+- Check namespace exists: `kubectl get namespace {{ package_name }}`
+- Verify secrets are created in Kubernetes
+- Check deployment YAML syntax: `kubectl apply --dry-run=client -f infra/k8s/`
+
+### Rollout Timeout
+
+- Check pod logs: `kubectl logs -f deployment/backend -n {{ package_name }}`
+- Check events: `kubectl get events -n {{ package_name }} --sort-by='.lastTimestamp'`
+- Verify health checks in deployment are correct
+- Check resource limits aren't too restrictive
+
+## Security Best Practices
+
+✅ **DO:**
+- Use GitHub OIDC (workload identity) when possible
+- Rotate service principal credentials regularly (if using)
+- Use GitHub Environments with required reviewers for production
+- Limit branch protection rules to `main` branch
+- Review workflow run logs for sensitive data before sharing
+
+❌ **DON'T:**
+- Commit `azure-credentials.json` or any credentials
+- Use personal accounts for automation
+- Grant more permissions than necessary
+- Disable security features for convenience
+
+## Additional Resources
+
+- [Azure Login Action Documentation](https://github.com/Azure/login)
+- [GitHub OIDC with Azure](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure)
+- [AKS kubectl access](https://learn.microsoft.com/en-us/azure/aks/control-kubeconfig-access)
+- [GitHub Actions Best Practices](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions)
+
+## Support
+
+For issues with:
+- **Template/Workflow**: {% if repository_url %}{{ repository_url }}/issues{% else %}Contact template maintainer{% endif %}
+- **Azure Services**: https://azure.microsoft.com/support/
+- **GitHub Actions**: https://github.com/orgs/community/discussions
+

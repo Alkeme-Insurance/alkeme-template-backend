@@ -1,0 +1,398 @@
+# {{ project_name }} - Azure Infrastructure
+
+This directory contains Infrastructure as Code (IaC) for deploying {{ project_name }} to Azure Kubernetes Service (AKS).
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AZURE PRODUCTION DEPLOYMENT                   │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────────┐          ┌──────────────────┐            │
+│  │  Azure Container │  ◄────►  │  Azure Kubernetes│            │
+│  │  Registry (ACR)  │          │  Service (AKS)   │            │
+│  │  Docker Images   │          │  3-10 Nodes      │            │
+│  └──────────────────┘          └────────┬─────────┘            │
+│                                          │                       │
+│                                          ▼                       │
+│  ┌──────────────────┐          ┌──────────────────┐            │
+│  │  Azure Key Vault │          │  {{ project_name }}         │            │
+│  │  Secrets Store   │          │  Backend Pods    │            │
+│  └──────────────────┘          └────────┬─────────┘            │
+│                                          │                       │
+│                                          ▼                       │
+{% if deploy_cosmos_db -%}
+│  ┌──────────────────┐          ┌──────────────────┐            │
+│  │  Azure Cosmos DB │  ◄────►  │  MongoDB Wire    │            │
+│  │  (MongoDB API)   │          │  Protocol 7.0    │            │
+│  └──────────────────┘          └──────────────────┘            │
+{% else -%}
+│  ┌──────────────────┐                                           │
+│  │  External        │  ◄───── Bring Your Own MongoDB           │
+│  │  MongoDB         │                                           │
+│  └──────────────────┘                                           │
+{% endif -%}
+│                                                                  │
+│  Deployed via: Bicep IaC + Azure CLI                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## What Gets Deployed
+
+### Core Infrastructure (Always)
+- **Azure Container Registry (ACR)** - Stores Docker images
+- **Azure Kubernetes Service (AKS)** - Manages containerized workloads
+  - {{ '3-10' if azure_environment == 'prod' else '1-5' }} auto-scaling nodes
+  - Azure AD integration for RBAC
+  - Workload Identity enabled (OIDC)
+- **Azure Key Vault** - Stores secrets securely
+- **Virtual Network** - Network isolation for AKS
+- **Log Analytics Workspace** - Monitoring and logs
+
+{% if deploy_cosmos_db -%}
+### Database (Included)
+- **Azure Cosmos DB** - MongoDB API (Wire Protocol 7.0)
+  - Serverless pricing for dev
+  - Provisioned throughput for prod
+  - Automatic failover enabled
+{% else -%}
+### Database (Bring Your Own)
+- Connect to any MongoDB-compatible database via `MONGODB_URI`
+{% endif %}
+### Optional (If Configured)
+- **GitHub OIDC Identity** - For CI/CD authentication
+
+## Prerequisites
+
+1. **Azure CLI** - [Install](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli)
+   ```bash
+   az --version  # Verify installation
+   az login      # Authenticate
+   ```
+
+2. **kubectl** - [Install](https://kubernetes.io/docs/tasks/tools/)
+   ```bash
+   kubectl version --client
+   ```
+
+3. **Docker** - [Install](https://docs.docker.com/get-docker/)
+   ```bash
+   docker --version
+   ```
+
+4. **Azure Subscription** - With Contributor access
+
+## Deployment Steps
+
+### Step 1: Set Environment Variables
+
+Create or update `.env` file in project root:
+
+```bash
+# Copy example
+cp .env.example .env
+
+# Edit with your values
+nano .env
+```
+
+Required variables:
+```bash
+# CORS Origins
+BACKEND_CORS_ORIGINS=https://your-frontend-domain.com
+{% if use_azure_auth %}
+# Azure AD (if using authentication)
+AZURE_CLIENT_ID=your-client-id
+AZURE_TENANT_ID=your-tenant-id
+AZURE_CLIENT_SECRET=your-client-secret
+OPENAPI_CLIENT_ID=your-client-id
+{% endif %}
+```
+
+### Step 2: Deploy Infrastructure
+
+```bash
+cd infra/bicep
+chmod +x deploy.sh
+./deploy.sh
+```
+
+This will:
+- Check prerequisites
+- Load secrets from `.env`
+- Create Azure resource group
+- Deploy Bicep template
+- Display deployment outputs
+
+⏱️ **Deployment time:** 10-15 minutes
+
+### Step 3: Connect to AKS
+
+```bash
+# Get credentials
+az aks get-credentials \
+  --resource-group {{ azure_resource_group }} \
+  --name {{ package_name }}-{{ azure_environment }}-aks
+
+# Verify connection
+kubectl get nodes
+```
+
+### Step 4: Build and Push Docker Image
+
+```bash
+# Get ACR name from deployment output
+export ACR_NAME="<acr-name-from-deployment>"
+export ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
+
+# Login to ACR
+az acr login --name $ACR_NAME
+
+# Build image (from project root)
+cd ../..
+docker build -t ${ACR_LOGIN_SERVER}/{{ package_name }}-backend:latest -f Dockerfile .
+
+# Push to ACR
+docker push ${ACR_LOGIN_SERVER}/{{ package_name }}-backend:latest
+```
+
+### Step 5: Create Kubernetes Secrets
+
+```bash
+# Get Key Vault name from deployment
+export KEY_VAULT_NAME="<vault-name-from-deployment>"
+
+# Create namespace
+kubectl create namespace {{ package_name }}
+
+# Create secrets from Key Vault
+kubectl create secret generic {{ package_name }}-secrets \
+  --from-literal=mongodb-uri="$(az keyvault secret show --vault-name $KEY_VAULT_NAME --name mongodb-uri --query value -o tsv)" \
+{% if use_azure_auth -%}
+  --from-literal=azure-client-id="$(az keyvault secret show --vault-name $KEY_VAULT_NAME --name azure-client-id --query value -o tsv)" \
+  --from-literal=azure-tenant-id="$(az keyvault secret show --vault-name $KEY_VAULT_NAME --name azure-tenant-id --query value -o tsv)" \
+{% endif -%}
+  --namespace {{ package_name }}
+```
+
+### Step 6: Update Kubernetes Manifests
+
+Edit `k8s/backend-deployment.yaml` and replace `<ACR_LOGIN_SERVER>` with your actual ACR login server:
+
+```bash
+cd infra/k8s
+
+# Update ACR login server in deployment
+sed -i "s|<ACR_LOGIN_SERVER>|${ACR_LOGIN_SERVER}|g" backend-deployment.yaml
+```
+
+### Step 7: Deploy to Kubernetes
+
+```bash
+# Apply all manifests
+kubectl apply -f ./
+
+# Verify deployment
+kubectl get pods -n {{ package_name }}
+kubectl get services -n {{ package_name }}
+```
+
+### Step 8: Check Application Logs
+
+```bash
+# View backend logs
+kubectl logs -f deployment/backend -n {{ package_name }}
+
+# Get pod status
+kubectl describe pod -l app=backend -n {{ package_name }}
+```
+
+## Accessing the Application
+
+### Get Service Endpoint
+
+```bash
+# ClusterIP service (internal only)
+kubectl get service backend-service -n {{ package_name }}
+
+# If using Ingress
+kubectl get ingress -n {{ package_name }}
+```
+
+### Port Forwarding (for testing)
+
+```bash
+kubectl port-forward -n {{ package_name }} service/backend-service 8000:8000
+```
+
+Visit: http://localhost:8000/docs
+
+## Environment Variables
+
+The application uses these environment variables from Kubernetes:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `MONGODB_URI` | Secret | MongoDB connection string |
+| `BACKEND_CORS_ORIGINS` | ConfigMap | CORS allowed origins |
+| `DEV_NO_AUTH` | ConfigMap | Disable auth (always false in production) |
+{% if use_azure_auth -%}
+| `AZURE_CLIENT_ID` | Secret | Azure AD client ID |
+| `AZURE_TENANT_ID` | Secret | Azure AD tenant ID |
+{% endif %}
+## Troubleshooting
+
+### Pods Not Starting
+
+```bash
+# Check pod events
+kubectl describe pod -l app=backend -n {{ package_name }}
+
+# Check logs
+kubectl logs -l app=backend -n {{ package_name }}
+
+# Check secrets exist
+kubectl get secrets -n {{ package_name }}
+```
+
+### Image Pull Errors
+
+```bash
+# Verify ACR access
+az acr repository list --name $ACR_NAME
+
+# Check AKS ACR integration
+az aks check-acr --resource-group {{ azure_resource_group }} --name {{ package_name }}-{{ azure_environment }}-aks --acr ${ACR_NAME}.azurecr.io
+```
+
+### Connection Issues
+
+```bash
+# Test connectivity to MongoDB
+kubectl run -it --rm debug --image=mongo:7 --restart=Never -- mongosh "$MONGODB_URI"
+
+# Test backend health
+kubectl port-forward -n {{ package_name }} service/backend-service 8000:8000
+curl http://localhost:8000/health
+```
+
+### View Key Vault Secrets
+
+```bash
+# List all secrets
+az keyvault secret list --vault-name $KEY_VAULT_NAME --query "[].name" -o table
+
+# Get specific secret
+az keyvault secret show --vault-name $KEY_VAULT_NAME --name mongodb-uri --query value -o tsv
+```
+
+## Scaling
+
+### Manual Scaling
+
+```bash
+# Scale backend deployment
+kubectl scale deployment backend --replicas=5 -n {{ package_name }}
+```
+
+### Auto-Scaling (HPA)
+
+The Horizontal Pod Autoscaler is configured in `k8s/hpa.yaml`:
+- Min replicas: {{ '3' if azure_environment == 'prod' else '2' }}
+- Max replicas: {{ '10' if azure_environment == 'prod' else '5' }}
+- Target CPU: 70%
+
+## Monitoring
+
+### View Logs
+
+```bash
+# Backend logs
+kubectl logs -f deployment/backend -n {{ package_name }}
+
+# All pods in namespace
+kubectl logs -l app=backend -n {{ package_name }} --all-containers=true
+```
+
+### Azure Monitor
+
+View metrics and logs in Azure Portal:
+1. Navigate to AKS cluster
+2. Go to **Insights** blade
+3. View container logs and metrics
+
+## Cleanup
+
+### Delete Kubernetes Resources
+
+```bash
+kubectl delete namespace {{ package_name }}
+```
+
+### Delete Azure Resources
+
+```bash
+az group delete --name {{ azure_resource_group }} --yes --no-wait
+```
+
+⚠️ **Warning:** This deletes all resources including databases!
+
+## CI/CD with GitHub Actions
+
+If GitHub OIDC was configured during deployment, add these secrets to your repository:
+
+**Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+
+Required secrets (from deployment output):
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+Example workflow (`.github/workflows/deploy.yml`):
+
+```yaml
+name: Deploy to AKS
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: azure/login@v1
+        with:
+          client-id: ${{ '{{' }} secrets.AZURE_CLIENT_ID {{ '}}' }}
+          tenant-id: ${{ '{{' }} secrets.AZURE_TENANT_ID {{ '}}' }}
+          subscription-id: ${{ '{{' }} secrets.AZURE_SUBSCRIPTION_ID {{ '}}' }}
+      
+      - name: Build and push image
+        run: |
+          az acr login --name {{ azure_container_registry_name }}
+          docker build -t {{ azure_container_registry_name }}.azurecr.io/{{ package_name }}-backend:${{ '{{' }} github.sha {{ '}}' }} .
+          docker push {{ azure_container_registry_name }}.azurecr.io/{{ package_name }}-backend:${{ '{{' }} github.sha {{ '}}' }}
+      
+      - name: Deploy to AKS
+        run: |
+          az aks get-credentials --resource-group {{ azure_resource_group }} --name {{ package_name }}-{{ azure_environment }}-aks
+          kubectl set image deployment/backend backend={{ azure_container_registry_name }}.azurecr.io/{{ package_name }}-backend:${{ '{{' }} github.sha {{ '}}' }} -n {{ package_name }}
+```
+
+## Additional Resources
+
+- [Azure Kubernetes Service Documentation](https://docs.microsoft.com/en-us/azure/aks/)
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [Azure Container Registry Documentation](https://docs.microsoft.com/en-us/azure/container-registry/)
+- [Azure Key Vault Documentation](https://docs.microsoft.com/en-us/azure/key-vault/)
+{% if deploy_cosmos_db -%}
+- [Azure Cosmos DB for MongoDB Documentation](https://docs.microsoft.com/en-us/azure/cosmos-db/mongodb/)
+{% endif %}
+## Support
+
+For issues:
+- Project Issues: {% if repository_url %}{{ repository_url }}/issues{% else %}Contact project maintainer{% endif %}
+- Azure Support: https://azure.microsoft.com/support/
+

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ package_name }}-config
+  namespace: {{ package_name }}
+data:
+  BACKEND_CORS_ORIGINS: "{{ backend_cors_origins }}"
+  DEV_NO_AUTH: "false"  # Production mode - authentication required
+
+

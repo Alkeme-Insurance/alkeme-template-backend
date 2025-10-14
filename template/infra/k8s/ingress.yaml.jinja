@@ -1,0 +1,42 @@
+# ============================================
+# {{ project_name }} - NGINX Ingress
+# ============================================
+# Optional: Requires NGINX Ingress Controller installed on AKS
+#
+# To install NGINX Ingress Controller:
+# helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+# helm install nginx-ingress ingress-nginx/ingress-nginx \
+#   --namespace ingress-nginx \
+#   --create-namespace \
+#   --set controller.service.annotations."service\.beta\.kubernetes\.io/azure-load-balancer-health-probe-request-path"=/healthz
+#
+# ============================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ package_name }}-ingress
+  namespace: {{ package_name }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"  # Optional: if using cert-manager
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - {{ package_name }}-api-{{ azure_environment }}.example.com  # Replace with your domain
+    secretName: {{ package_name }}-tls
+  rules:
+  - host: {{ package_name }}-api-{{ azure_environment }}.example.com  # Replace with your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-service
+            port:
+              number: 8000
+
+

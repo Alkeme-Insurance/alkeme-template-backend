@@ -1,0 +1,204 @@
+# AI Agent Rules - {{ project_name }}
+
+You are an expert in Python, FastAPI, async programming, MongoDB/Motor,{% if use_azure_auth %} Azure AD authentication,{% endif %} and modern backend development.
+
+## Project Context
+
+**{{ project_name }}** - FastAPI backend application
+
+**Stack:**
+- FastAPI + Pydantic v2 + Motor (async MongoDB){% if use_azure_auth %}
+- Azure AD authentication (fastapi-azure-auth){% endif %}
+- Python {{ python_version }}
+- Docker for development{% if use_azure_deployment %}
+- Azure AKS for production deployment{% endif %}
+
+## Rules Organization
+
+Comprehensive rules are organized in `.cursor/rules/` for maintainability:
+
+### 📋 [Project Rules](.cursor/rules/project.md)
+Architecture, FastAPI patterns, error handling, database strategy
+
+### 🐍 [Python Rules](.cursor/rules/python.md)
+Code style, type hints, async patterns, Pydantic models, MongoDB operations
+
+### 🛡️ [General Rules](.cursor/rules/general.md)
+Security, testing, git workflow, performance, common mistakes
+
+## Quick Critical Rules
+
+### Architecture (ENFORCE STRICTLY)
+
+```
+Routers (HTTP) → Services (Business Logic) → Clients (Data/External APIs)
+```
+
+**Routers** (`backend/routers/`): HTTP only, validate input, use `Depends()`, minimal logic
+
+**Services** (`backend/services/`): Pure business logic, NO FastAPI imports, return typed objects
+
+**Clients** (`backend/clients/`): Database operations, external APIs, no business logic
+
+### Code Style (REQUIRED)
+
+```python
+# Type hints on ALL functions
+async def get_user(user_id: str) -> UserPublic | None:
+    pass
+
+# Naming conventions
+user_service.py          # Files: lowercase_with_underscores
+def get_user_by_id():   # Functions: lowercase_with_underscores
+class UserService:       # Classes: PascalCase
+is_active = True        # Booleans: is_, has_, can_ prefix
+MAX_RETRIES = 3         # Constants: UPPER_CASE
+```
+
+### Async Programming (CRITICAL)
+
+```python
+# ✅ Use async def for ALL I/O operations
+async def get_user(user_id: str):
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    return user
+
+# ❌ NEVER block the event loop
+import requests  # Don't use sync libraries in async code
+```
+
+### Pydantic Models (REQUIRED PATTERN)
+
+Use descriptive suffixes: `UserCreate`, `UserUpdate`, `UserInDB`, `UserPublic`
+
+```python
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+
+class UserCreate(BaseModel):
+    """For POST requests."""
+    email: EmailStr
+    name: str = Field(..., min_length=1, max_length=100)
+
+class UserPublic(BaseModel):
+    """API response (no sensitive fields)."""
+    id: str = Field(alias="_id")
+    email: EmailStr
+    name: str
+    
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+```
+
+### MongoDB/Motor (CRITICAL)
+
+```python
+# Always validate ObjectId before querying
+if not ObjectId.is_valid(user_id):
+    raise HTTPException(status_code=400, detail="Invalid ID")
+
+# Async operations with Motor
+user = await db.users.find_one({"_id": ObjectId(user_id)})
+```
+
+### Security (NEVER BREAK)
+
+```python
+# ❌ NEVER log secrets
+logger.info(f"Connecting to {settings.MONGODB_URI}")  # Contains password!
+
+# ✅ Correct - log actions, not secrets
+logger.info("Connecting to database")
+```
+
+**Critical Security Rules:**
+- Never log secrets, tokens, passwords, connection strings
+- Validate ALL inputs with Pydantic models
+- No `*` in CORS origins (production)
+- Hash passwords with bcrypt
+
+### Error Handling (GUARD CLAUSES)
+
+```python
+async def get_user(user_id: str):
+    # Validate early, return immediately
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid ID")
+    
+    user = await service.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    return user  # Happy path unindented
+```
+
+### FastAPI Application Setup
+
+```python
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    async with mongo_lifespan():{% if use_azure_auth %}
+        if settings.AZURE_TENANT_ID:
+            await azure_scheme.openid_config.load_config(){% endif %}
+        await ensure_indexes()
+        yield
+
+app = FastAPI(lifespan=lifespan)
+
+# Health check (no auth required)
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+```
+
+## Code Quality Checklist
+
+Before every commit:
+```bash
+uv run ruff format backend
+uv run ruff check backend --fix
+uv run mypy backend
+uv run pytest --cov=backend
+```
+
+## Common Mistakes to Avoid
+
+❌ Using sync I/O in async functions  
+❌ Not validating ObjectId strings  
+❌ Logging secrets or connection strings  
+❌ Using global state instead of `Depends()`  
+❌ Business logic in routers  
+❌ Committing `.env` files  
+❌ `*` in CORS origins (production)  
+
+## Development Commands
+
+```bash
+# Local development
+uv run uvicorn backend.main:app --reload
+
+# Testing
+uv run pytest
+uv run pytest --cov=backend --cov-report=html
+
+# Code quality
+uv run ruff format backend
+uv run ruff check backend --fix
+uv run mypy backend
+
+# Docker
+docker compose up --build
+```
+
+## References
+
+For comprehensive guidance, see:
+- **Project Architecture**: [.cursor/rules/project.md](.cursor/rules/project.md)
+- **Python Style Guide**: [.cursor/rules/python.md](.cursor/rules/python.md)
+- **Security & Workflow**: [.cursor/rules/general.md](.cursor/rules/general.md)
+- **Rules Organization**: [.cursor/rules/README.md](.cursor/rules/README.md)
+
+---
+
+**Remember**: This is production-ready code. All code should be clean, well-typed, secure, and follow best practices.
+
