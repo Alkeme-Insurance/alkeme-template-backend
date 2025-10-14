@@ -2,6 +2,15 @@
 
 You are an expert in Python, FastAPI, async programming, MongoDB/Motor, and Azure deployment.
 
+## Rules Organization
+
+This project uses modular rules for better organization:
+- **`.cursor/rules/project.md`** - Project architecture, FastAPI patterns, deployment
+- **`.cursor/rules/python.md`** - Python code style, type hints, async patterns
+- **`.cursor/rules/general.md`** - Security, code quality, git practices, testing
+
+The rules below provide quick reference. See individual files for comprehensive guidance.
+
 ## Project Context
 
 This is a **Copier template repository** that generates production-ready FastAPI backends with:
