@@ -1,0 +1,219 @@
+# {{ project_name }}
+
+{{ project_description }}
+
+## Features
+
+- **FastAPI** - Modern, fast web framework for building APIs
+- **Pydantic v2** - Data validation and settings management
+- **Motor** - Async MongoDB driver
+- **PyMongo 3.x** - Azure Cosmos DB compatibility
+{% if use_azure_auth -%}
+- **Azure AD Authentication** - Enterprise SSO via fastapi-azure-auth
+{% endif -%}
+- **Docker** - Multi-stage builds with uv package manager
+- **uv** - Fast Python package manager (10-100x faster than pip)
+- **Ruff** - Lightning-fast linter and formatter
+- **Mypy** - Static type checking
+- **Pytest** - Testing with async support
+
+## Prerequisites
+
+- Python {{ python_version }}+
+- [uv](https://github.com/astral-sh/uv) - `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Docker and Docker Compose
+{% if deploy_cosmos_db -%}
+- Azure CLI (for deployment)
+{% endif %}
+
+## Quick Start
+
+### Local Development
+
+```bash
+# Install dependencies
+uv sync
+
+# Copy environment template
+cp .env.example .env
+# Edit .env with your configuration
+
+# Run development server
+uv run uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+# API will be available at http://localhost:8000
+# API docs at http://localhost:8000/docs
+```
+
+### Docker Development
+
+```bash
+# Start all services (backend + MongoDB)
+docker compose up --build
+
+# View logs
+docker compose logs -f backend
+
+# Stop services
+docker compose down
+```
+
+## Project Structure
+
+```
+{{ package_name }}/
+├── backend/                 # Main application code
+│   ├── main.py             # FastAPI app & lifespan
+│   ├── config.py           # Settings management
+{% if use_azure_auth -%}
+│   ├── auth.py             # Azure AD authentication
+{% endif -%}
+│   ├── dependencies.py     # Reusable dependencies
+│   ├── routers/            # API endpoints
+│   │   ├── users.py
+│   │   └── projects.py
+│   ├── services/           # Business logic
+│   │   ├── user_service.py
+│   │   └── project_service.py
+│   ├── models/             # Pydantic schemas
+│   │   ├── user.py
+│   │   └── project.py
+│   ├── clients/            # External integrations
+│   │   └── mongo_db.py
+│   └── utils/              # Utilities
+│       ├── indexes.py
+│       └── seed.py
+├── tests/                  # Test suite
+├── pyproject.toml          # Python dependencies
+├── Dockerfile              # Multi-stage build
+├── docker-compose.yml      # Local development stack
+└── .env.example            # Environment template
+```
+
+## Configuration
+
+See `.env.example` for all configuration options.
+
+### Required Environment Variables
+
+```bash
+# MongoDB Connection
+MONGODB_URI=mongodb://mongodb:27017/{{package_name}}
+
+# CORS Origins
+BACKEND_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+{% if use_azure_auth %}
+# Azure AD Authentication
+AZURE_TENANT_ID=your-tenant-id-here
+AZURE_CLIENT_ID=your-client-id-here  
+AZURE_CLIENT_SECRET=your-secret-here
+OPENAPI_CLIENT_ID=your-client-id-here
+{% endif %}
+```
+
+## Development Workflow
+
+### Code Quality
+
+```bash
+# Format code
+uv run ruff format backend
+
+# Lint code
+uv run ruff check backend --fix
+
+# Type check
+uv run mypy backend
+
+# Run all quality checks
+uv run ruff format backend && uv run ruff check backend --fix && uv run mypy backend
+```
+
+### Testing
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=backend --cov-report=term-missing
+
+# Run specific test file
+uv run pytest tests/test_main.py -v
+```
+
+## API Documentation
+
+Once the server is running, visit:
+
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+- **OpenAPI JSON**: http://localhost:8000/openapi.json
+
+## Architecture
+
+This application follows a layered architecture:
+
+```
+Routers (HTTP) → Services (Business Logic) → Clients (Data/External APIs)
+```
+
+- **Routers**: Handle HTTP requests, validate input, return responses
+- **Services**: Pure business logic, no FastAPI dependencies
+- **Clients**: Database operations, external API calls
+
+## Database
+
+### Local Development
+- MongoDB 7.0 Docker container (included in docker-compose.yml)
+- Connection: `mongodb://mongodb:27017/{{package_name}}`
+
+{% if deploy_cosmos_db -%}
+### Production
+- Azure Cosmos DB (MongoDB API)
+- Deployed via Bicep infrastructure as code
+- Same code works with both (PyMongo 3.x compatibility)
+{% endif %}
+
+## Deployment
+
+{% if deploy_cosmos_db -%}
+### Azure Container Apps
+
+See `infra/` directory for Bicep infrastructure templates.
+
+```bash
+# Deploy to Azure
+cd infra
+./deploy.sh
+```
+{% else -%}
+### Docker
+
+Build and push to your container registry:
+
+```bash
+docker build -t {{package_name}}:latest .
+docker push {{package_name}}:latest
+```
+{% endif %}
+
+## Contributing
+
+1. Create a feature branch
+2. Make your changes
+3. Run quality checks (format, lint, type check, tests)
+4. Submit a pull request
+
+## License
+
+{{ owner_org }} - {{ author_name }}
+
+## Support
+
+For issues and questions:
+- Email: {{ author_email }}
+{% if repository_url -%}
+- Issues: {{ repository_url }}/issues
+{% endif %}
+

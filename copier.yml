@@ -1,0 +1,228 @@
+# Alkeme Backend Template - Copier Configuration
+# https://copier.readthedocs.io/en/stable/
+
+_min_copier_version: "9.2"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+_envops:
+  block_start_string: "{%"
+  block_end_string: "%}"
+  variable_start_string: "{{"
+  variable_end_string: "}}"
+  comment_start_string: "{#"
+  comment_end_string: "#}"
+
+_skip_if_exists:
+  - "*.md"
+  - ".env"
+  - "backend/**/*.py"
+
+# ============================================================================
+# PROJECT IDENTITY
+# ============================================================================
+
+project_name:
+  type: str
+  help: |
+    What is your backend project name?
+    This will be used in documentation and API title.
+  default: "Alkeme Template Backend"
+  validator: >-
+    {% if not project_name or project_name.strip() == '' %}
+    Project name cannot be empty
+    {% endif %}
+
+package_name:
+  type: str
+  help: |
+    Python package name (lowercase with underscores)
+    This will be the folder name and package identifier.
+  placeholder: "alkeme_backend"
+  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') }}"
+  validator: >-
+    {% if not (package_name | regex_search('^[a-z][a-z0-9_]*$')) %}
+    {{package_name}} is not a valid Python package name. Must start with lowercase letter and contain only lowercase letters, numbers, and underscores.
+    {% endif %}
+
+project_description:
+  type: str
+  help: Short description of your project
+  placeholder: "A modern FastAPI backend application"
+  default: "A modern FastAPI backend application with MongoDB and Azure deployment"
+  validator: >-
+    {% if not project_description or project_description.strip() == '' %}
+    Project description cannot be empty
+    {% endif %}
+
+owner_org:
+  type: str
+  help: Owning organization or team name
+  default: "Alkeme"
+
+author_name:
+  type: str
+  help: Your name or organization name
+  placeholder: "Your Name"
+  default: "Intelligent Solutions Alkeme Team"
+  validator: >-
+    {% if not author_name or author_name.strip() == '' %}
+    Author name cannot be empty
+    {% endif %}
+
+author_email:
+  type: str
+  help: Contact email address
+  placeholder: "email@example.com"
+  default: "dev@alkeme.com"
+  validator: >-
+    {% if not author_email or author_email.strip() == '' %}
+    Author email cannot be empty
+    {% elif '@' not in author_email %}
+    Must be a valid email address
+    {% endif %}
+
+repository_url:
+  type: str
+  help: Git repository URL (leave empty if not yet created)
+  default: ""
+  placeholder: "https://github.com/Alkeme-Insurance/{{ package_name }}"
+
+# ============================================================================
+# FEATURE FLAGS
+# ============================================================================
+
+use_azure_auth:
+  type: bool
+  help: |
+    Include Azure AD authentication (fastapi-azure-auth)?
+    Adds Microsoft authentication with SSO capabilities.
+  default: true
+
+deploy_cosmos_db:
+  type: bool
+  help: |
+    Deploy Azure Cosmos DB in production?
+    Note: Local development always uses MongoDB Docker container.
+    This only affects Azure deployment infrastructure.
+  default: true
+
+# ============================================================================
+# DEVELOPMENT TOOLS
+# ============================================================================
+
+python_version:
+  type: str
+  help: |
+    Which version of Python do you want to use?
+  choices:
+    - "3.10"
+    - "3.11"
+    - "3.12"
+    - "3.13"
+  default: "3.12"
+
+use_git_hooks:
+  type: bool
+  help: |
+    Setup git hooks for secret scanning?
+    Prevents passwords, API keys, and credentials from being committed.
+  default: true
+
+git_hook_tool:
+  type: str
+  help: Choose secret scanning tool for git hooks
+  choices:
+    - "detect-secrets"
+    - "pre-commit"
+  default: "detect-secrets"
+  when: "{{ use_git_hooks }}"
+
+# ============================================================================
+# POST-GENERATION TASKS
+# ============================================================================
+
+_tasks:
+  # Initialize git repository
+  - command: '[ ! -d .git ] && git init -q || true'
+    when: true
+
+  # Install dependencies with uv
+  - command: |
+      curl -LsSf https://astral.sh/uv/install.sh | sh || true
+      uv sync
+    when: true
+
+  # Setup git hooks for secret scanning
+  - command: |
+      {% if git_hook_tool == 'detect-secrets' %}
+      uv tool install detect-secrets || pip install detect-secrets
+      detect-secrets scan --baseline .secrets.baseline
+      {% else %}
+      uv tool install pre-commit || pip install pre-commit
+      pre-commit install
+      {% endif %}
+    when: "{{ use_git_hooks }}"
+
+  # Create .env from .env.example
+  - command: '[ ! -f .env ] && cp .env.example .env || true'
+    when: true
+
+  # Initial git commit
+  - command: git add .
+    when: true
+
+  - command: 'git commit -m "chore: scaffold {{ package_name }} via Copier" || true'
+    when: true
+
+  # Success message
+  - |
+    echo ""
+    echo "✅ {{ project_name }} has been successfully created!"
+    echo ""
+    echo "📁 Project location: {{ _copier_conf.dst_path }}"
+    echo ""
+    echo "🚀 Next steps:"
+    echo ""
+    echo "  1. cd {{ package_name }}"
+    echo "  2. uv run uvicorn backend.main:app --reload  # Start development server"
+    echo "  3. uv run pytest                            # Run tests"
+    echo "  4. docker compose up --build                # Run with Docker"
+    echo ""
+    {% if use_azure_auth %}
+    echo "🔐 Azure AD Configuration:"
+    echo "  - Register your app in Azure AD"
+    echo "  - Update AZURE_CLIENT_ID and AZURE_TENANT_ID in .env"
+    echo ""
+    {% endif %}
+    {% if use_git_hooks %}
+    echo "🔧 Git Hooks ({{ git_hook_tool }}):"
+    echo "  - Python {{ python_version }}"
+    echo "  - Secret scanning enabled to prevent credential leaks"
+    echo ""
+    {% endif %}
+    echo "📖 Documentation: README.md"
+    echo ""
+
+# ============================================================================
+# TEMPLATE METADATA
+# ============================================================================
+
+_metadata:
+  template_name: "Alkeme Backend Template"
+  template_version: "0.1.0"
+  template_description: "Production-ready FastAPI + MongoDB backend template with Docker and Azure deployment"
+  template_url: "https://github.com/alkeme/alkeme-template-backend"
+  copier_version: "9.2.0"
+  features:
+    - "⚡ Modern Backend: FastAPI + Pydantic v2 + Motor (async MongoDB)"
+    - "🐍 Python 3.10-3.13 Support"
+    - "📦 uv Package Manager: Fast and reliable Python package management"
+    - "🐳 Docker Support: Multi-stage builds with MongoDB"
+    - "🔐 Authentication: Azure AD (MSAL) integration ready"
+    - "☁️ Azure Deployment: Bicep infrastructure and Container Apps support"
+    - "🧪 Testing: Pytest setup with async support"
+    - "🔧 Pre-commit Hooks: Automated secret scanning"
+    - "🏗️ CI Ready: Structured for GitHub Actions workflows"
+

@@ -1,0 +1,86 @@
+"""User service - business logic for user operations."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from backend.models.user import UserCreate, UserPublic, UserUpdate
+
+
+class UserService:
+    """Business logic for user operations."""
+
+    def __init__(self, db: AsyncIOMotorDatabase):
+        """Initialize user service with database."""
+        self.collection = db["users"]
+
+    async def create_user(self, user_data: UserCreate) -> UserPublic:
+        """Create a new user."""
+        # Check if user already exists
+        existing = await self.collection.find_one({"email": user_data.email})
+        if existing:
+            raise ValueError("User with this email already exists")
+
+        # Create user document
+        user_dict = user_data.model_dump()
+        user_dict.pop("password")  # Don't store plain password (add hashing in production)
+        user_dict["is_active"] = True
+        user_dict["created_at"] = datetime.utcnow()
+
+        result = await self.collection.insert_one(user_dict)
+        user_dict["_id"] = str(result.inserted_id)
+
+        return UserPublic(**user_dict)
+
+    async def get_user_by_id(self, user_id: str) -> UserPublic | None:
+        """Get user by ID."""
+        if not ObjectId.is_valid(user_id):
+            return None
+
+        user = await self.collection.find_one({"_id": ObjectId(user_id)})
+        if user:
+            user["_id"] = str(user["_id"])
+            return UserPublic(**user)
+        return None
+
+    async def list_users(self, skip: int = 0, limit: int = 10) -> list[UserPublic]:
+        """List users with pagination."""
+        cursor = self.collection.find().skip(skip).limit(limit)
+        users = await cursor.to_list(length=limit)
+
+        for user in users:
+            user["_id"] = str(user["_id"])
+
+        return [UserPublic(**user) for user in users]
+
+    async def update_user(self, user_id: str, user_data: UserUpdate) -> UserPublic | None:
+        """Update user."""
+        if not ObjectId.is_valid(user_id):
+            return None
+
+        update_dict = user_data.model_dump(exclude_unset=True)
+        if not update_dict:
+            return await self.get_user_by_id(user_id)
+
+        update_dict["updated_at"] = datetime.utcnow()
+
+        result = await self.collection.update_one(
+            {"_id": ObjectId(user_id)}, {"$set": update_dict}
+        )
+
+        if result.matched_count == 0:
+            return None
+
+        return await self.get_user_by_id(user_id)
+
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete user."""
+        if not ObjectId.is_valid(user_id):
+            return False
+
+        result = await self.collection.delete_one({"_id": ObjectId(user_id)})
+        return result.deleted_count > 0
+

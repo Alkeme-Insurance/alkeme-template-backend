@@ -1,0 +1,40 @@
+"""MongoDB client configuration."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+from backend.config import settings
+
+_client: AsyncIOMotorClient | None = None
+_database: AsyncIOMotorDatabase | None = None
+
+
+@asynccontextmanager
+async def mongo_lifespan() -> AsyncGenerator[None, None]:
+    """MongoDB connection lifespan context manager."""
+    global _client, _database
+
+    # Connect to MongoDB
+    _client = AsyncIOMotorClient(settings.MONGODB_URI)
+    _database = _client.get_default_database()
+
+    # Verify connection
+    await _client.admin.command("ping")
+
+    yield
+
+    # Cleanup
+    if _client:
+        _client.close()
+
+
+def get_database() -> AsyncIOMotorDatabase:
+    """Get database instance for dependency injection."""
+    if _database is None:
+        raise RuntimeError("Database not initialized. Use mongo_lifespan context.")
+    return _database
+

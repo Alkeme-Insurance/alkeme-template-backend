@@ -1,0 +1,40 @@
+"""Seed initial data for development."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from backend.clients.mongo_db import get_database
+
+
+async def seed_initial_data() -> None:
+    """Seed initial data for development (if DEV_NO_AUTH is true)."""
+    db = get_database()
+
+    # Check if data already exists
+    user_count = await db.users.count_documents({})
+    if user_count > 0:
+        return  # Data already seeded
+
+    # Seed sample user
+    await db.users.insert_one(
+        {
+            "email": "dev@example.com",
+            "name": "Development User",
+            "is_active": True,
+            "created_at": datetime.utcnow(),
+        }
+    )
+
+    # Seed sample project
+    user = await db.users.find_one({"email": "dev@example.com"})
+    if user:
+        await db.projects.insert_one(
+            {
+                "name": "Sample Project",
+                "description": "A sample project for development",
+                "owner_id": str(user["_id"]),
+                "created_at": datetime.utcnow(),
+            }
+        )
+

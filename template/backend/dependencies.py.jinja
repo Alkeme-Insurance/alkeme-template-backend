@@ -1,0 +1,24 @@
+"""Reusable FastAPI dependencies."""
+
+from __future__ import annotations
+{% if use_azure_auth %}
+from fastapi import Security
+from backend.auth import azure_scheme
+{% endif %}
+
+from motor.motor_asyncio import AsyncIOMotorDatabase
+
+from backend.clients.mongo_db import get_database
+
+# Database dependency (can be used in routers)
+async def get_db() -> AsyncIOMotorDatabase:
+    """Get database dependency."""
+    return get_database()
+{% if use_azure_auth %}
+
+# Authentication dependency
+async def get_current_user(claims: dict = Security(azure_scheme)) -> dict:
+    """Get current authenticated user from JWT claims."""
+    return claims
+{% endif %}
+

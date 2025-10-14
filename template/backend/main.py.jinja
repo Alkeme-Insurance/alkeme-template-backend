@@ -1,0 +1,84 @@
+"""{{ project_name }} - FastAPI Application."""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+
+from fastapi import FastAPI{% if use_azure_auth %}, Security{% endif %}
+from fastapi.middleware.cors import CORSMiddleware
+{% if use_azure_auth %}
+from backend.auth import azure_scheme
+{% endif %}
+from backend.clients.mongo_db import mongo_lifespan
+from backend.config import settings
+from backend.routers import projects, users
+from backend.utils.indexes import ensure_indexes
+from backend.utils.seed import seed_initial_data
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan events."""
+    # Startup
+    async with mongo_lifespan():
+{% if use_azure_auth %}
+        # Load Azure AD OpenID config if tenant ID is provided
+        if settings.AZURE_TENANT_ID:
+            await azure_scheme.openid_config.load_config()
+{% endif %}
+        # Ensure database indexes
+        await ensure_indexes()
+
+        # Seed initial data for development
+        if settings.DEV_NO_AUTH:
+            await seed_initial_data()
+
+        yield
+
+    # Shutdown (cleanup handled by context managers)
+
+
+app = FastAPI(
+    title="{{ project_name }}",
+    description="{{ project_description }}",
+    version="0.1.0",
+{% if use_azure_auth %}
+    swagger_ui_oauth2_redirect_url="/oauth2-redirect",
+    swagger_ui_init_oauth={
+        "usePkceWithAuthorizationCodeGrant": True,
+        "clientId": settings.OPENAPI_CLIENT_ID,
+        "scopes": settings.SCOPE_NAME,
+    },
+{% endif %}
+    lifespan=lifespan,
+)
+
+# CORS middleware
+if settings.BACKEND_CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.get_cors_origins(),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+# Include routers
+app.include_router(users.router)
+app.include_router(projects.router)
+
+
+# Health check endpoint (no authentication required)
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Health check endpoint for container orchestration."""
+    return {"status": "healthy"}
+
+
+# Root endpoint
+@app.get("/")
+async def root({% if use_azure_auth %}claims: dict = Security(azure_scheme){% endif %}) -> dict[str, str]:
+    """Root endpoint."""
+    return {"message": "{{ project_name }} API"}
+

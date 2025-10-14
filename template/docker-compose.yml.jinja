@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: {{ package_name }}:latest
+    container_name: {{ package_name }}
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/{{ package_name }}
+{% if use_azure_auth -%}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      OPENAPI_CLIENT_ID: ${OPENAPI_CLIENT_ID:-}
+{% endif -%}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      DEV_NO_AUTH: ${DEV_NO_AUTH:-true}
+    ports:
+      - "${DOCKER_PORT:-8000}:80"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  mongodb:
+    image: mongo:7
+    container_name: {{ package_name }}-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+

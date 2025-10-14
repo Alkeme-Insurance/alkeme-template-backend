@@ -1,0 +1,19 @@
+"""Database index management."""
+
+from __future__ import annotations
+
+from backend.clients.mongo_db import get_database
+
+
+async def ensure_indexes() -> None:
+    """Create database indexes on startup."""
+    db = get_database()
+
+    # Users collection indexes
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("created_at")
+
+    # Projects collection indexes
+    await db.projects.create_index([("owner_id", 1), ("created_at", -1)])
+    await db.projects.create_index("name")
+
