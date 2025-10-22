@@ -118,9 +118,8 @@ jobs:
       #   uses: azure/login@v2
       #   with:
       #     creds: {% raw %}${{ secrets.AZURE_CREDENTIALS }}{% endraw %}
+{% endif %}
 
-{% endif -%}
-      
       - name: Login to Azure Container Registry
         run: |
           az acr login --name {% raw %}${{ env.ACR_NAME }}{% endraw %}
