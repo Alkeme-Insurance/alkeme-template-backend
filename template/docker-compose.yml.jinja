@@ -9,12 +9,12 @@ services:
     container_name: {{ package_name }}
     environment:
       MONGODB_URI: mongodb://mongodb:27017/{{ package_name }}
-{% if use_azure_auth -%}
+{% if use_azure_auth %}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
       AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
       OPENAPI_CLIENT_ID: ${OPENAPI_CLIENT_ID:-}
-{% endif -%}
+{% endif %}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
       DEV_NO_AUTH: ${DEV_NO_AUTH:-true}
     ports:

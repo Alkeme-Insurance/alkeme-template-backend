@@ -9,12 +9,12 @@ on:
 
 env:
   PYTHON_VERSION: "{{ python_version }}"
-{% if use_azure_deployment -%}
+{% if use_azure_deployment %}
   ACR_NAME: "{{ azure_container_registry_name }}"
   AKS_CLUSTER: "{{ package_name }}-{{ azure_environment }}-aks"
   RESOURCE_GROUP: "{{ azure_resource_group }}"
   NAMESPACE: "{{ package_name }}"
-{% endif -%}
+{% endif %}
 
 jobs:
   # Job 1: Lint, Type Check, and Test

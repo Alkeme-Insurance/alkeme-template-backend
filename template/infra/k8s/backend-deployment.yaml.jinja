@@ -41,7 +41,7 @@ spec:
             configMapKeyRef:
               name: {{ package_name }}-config
               key: DEV_NO_AUTH
-{% if use_azure_auth -%}
+{% if use_azure_auth %}
         - name: AZURE_CLIENT_ID
           valueFrom:
             secretKeyRef:
@@ -57,7 +57,7 @@ spec:
             secretKeyRef:
               name: {{ package_name }}-secrets
               key: azure-client-id
-{% endif -%}
+{% endif %}
         resources:
           requests:
             cpu: 250m
