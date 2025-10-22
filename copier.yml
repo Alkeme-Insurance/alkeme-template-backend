@@ -180,8 +180,8 @@ _tasks:
       {% endif %}
     when: "{{ use_git_hooks }}"
 
-  # Create .env from env.example
-  - command: '[ ! -f .env ] && cp env.example .env || true'
+  # Create .env from .env.example
+  - command: '[ ! -f .env ] && cp .env.example .env || true'
     when: true
 
   # Initial git commit
