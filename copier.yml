@@ -31,6 +31,7 @@ project_name:
   type: str
   help: What is your backend project name?
   placeholder: "My Backend API"
+  default: "My Backend API"
   validator: >-
     {% if not project_name or project_name.strip() == '' %}
     Project name cannot be empty
@@ -179,8 +180,8 @@ _tasks:
       {% endif %}
     when: "{{ use_git_hooks }}"
 
-  # Create .env from .env.example
-  - command: '[ ! -f .env ] && cp .env.example .env || true'
+  # Create .env from env.example
+  - command: '[ ! -f .env ] && cp env.example .env || true'
     when: true
 
   # Initial git commit
